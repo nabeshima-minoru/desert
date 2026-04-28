@@ -204,6 +204,87 @@
     pointer-events: none;
     z-index: 200;
   }
+  /* 砂嵐演出 */
+  #sandstorm {
+    position: absolute;
+    top: 50px;
+    left: 50px;
+    width: 500px;
+    height: 500px;
+    pointer-events: none;
+    z-index: 50;
+    opacity: 0;
+    transition: opacity 1.5s;
+    overflow: hidden;
+  }
+  #sandstorm.active {
+    opacity: 1;
+  }
+  /* 視界制限マスク(プレイヤー周囲のみ表示) */
+  #vision-mask {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: radial-gradient(circle at 50% 50%,
+                transparent 0px,
+                transparent 110px,
+                rgba(180, 130, 80, 0.7) 140px,
+                rgba(160, 110, 60, 0.95) 200px,
+                rgba(140, 95, 50, 1) 280px);
+    transition: background 0.15s linear;
+  }
+  /* 砂嵐の粒子(横に流れる) */
+  #sandstorm-particles {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background-image:
+      repeating-linear-gradient(95deg,
+        transparent 0,
+        transparent 3px,
+        rgba(220, 180, 130, 0.25) 3px,
+        rgba(220, 180, 130, 0.25) 4px,
+        transparent 4px,
+        transparent 9px),
+      repeating-linear-gradient(92deg,
+        transparent 0,
+        transparent 6px,
+        rgba(200, 150, 100, 0.2) 6px,
+        rgba(200, 150, 100, 0.2) 7px,
+        transparent 7px,
+        transparent 14px);
+    animation: sandFlow 0.8s linear infinite;
+    mix-blend-mode: screen;
+  }
+  @keyframes sandFlow {
+    from { transform: translateX(0); }
+    to { transform: translateX(-30px); }
+  }
+  /* Day3警告フラッシュ */
+  #day3-warning {
+    position: absolute;
+    top: 50%;
+    left: 0; right: 0;
+    transform: translateY(-50%);
+    text-align: center;
+    color: #ffcc66;
+    font-size: 28px;
+    font-weight: bold;
+    text-shadow: 0 0 16px rgba(255, 100, 30, 0.8), 0 2px 4px rgba(0,0,0,0.9);
+    z-index: 90;
+    opacity: 0;
+    pointer-events: none;
+    letter-spacing: 4px;
+  }
+  #day3-warning.show {
+    animation: day3WarnAnim 3s ease-out forwards;
+  }
+  @keyframes day3WarnAnim {
+    0%   { opacity: 0; transform: translateY(-50%) scale(0.9); }
+    20%  { opacity: 1; transform: translateY(-50%) scale(1.05); }
+    80%  { opacity: 1; transform: translateY(-50%) scale(1); }
+    100% { opacity: 0; transform: translateY(-50%) scale(1); }
+  }
 </style>
 </head>
 <body>
@@ -213,6 +294,11 @@
   <button id="mute-btn" title="ミュート切替">🔊</button>
   <div id="grid"></div>
   <div id="player">🚶</div>
+  <div id="sandstorm">
+    <div id="sandstorm-particles"></div>
+    <div id="vision-mask"></div>
+  </div>
+  <div id="day3-warning">砂嵐が来る</div>
   <div id="footer">作: 鍋島</div>
   <div id="overlay">
     <div id="overlay-msg"></div>
@@ -227,11 +313,19 @@
   const GRID_OFFSET_Y = 50;
 
   const PHASES = ['朝', '昼', '夕', '夜'];
-  const PHASE_DURATIONS = {
+  // 通常時のフェーズ時間
+  const PHASE_DURATIONS_NORMAL = {
     '朝': 22000,
     '昼': 15000,
     '夕': 22000,
     '夜': 15000
+  };
+  // Day3 (高難度) のフェーズ時間 (約20%短縮)
+  const PHASE_DURATIONS_HARD = {
+    '朝': 18000,
+    '昼': 12000,
+    '夕': 18000,
+    '夜': 12000
   };
   const WARNING_TIME = 5000;
   const PHASE_COLORS = {
@@ -239,6 +333,13 @@
     '昼': '#FFD33A',
     '夕': '#C75A2C',
     '夜': '#1a1a3e'
+  };
+  // Day3 朝の空色は砂嵐で赤茶色っぽく
+  const PHASE_COLORS_HARD = {
+    '朝': '#A85530',
+    '昼': '#D89030',
+    '夕': '#8B3A1A',
+    '夜': '#0F0F2A'
   };
   const GRID_COLORS = {
     '朝': '#E8C895',
@@ -251,8 +352,13 @@
   const SLEEPING_BAG = { x: 7, y: 7 };
   const WATER = { x: 5, y: 5 };
 
-  const SCORPION_COUNT = 8;
-  const SCORPION_MOVE_INTERVAL = 1200;
+  // サソリ設定
+  const SCORPION_COUNT_NORMAL = 8;
+  const SCORPION_COUNT_HARD = 12;
+  const SCORPION_INTERVAL_NORMAL = 1200;
+  const SCORPION_INTERVAL_HARD = 800;
+
+  const HARD_DAY = 3; // この日から高難度
 
   const DECORATIONS = [
     { x: 0, y: 0, emoji: '🌵' },
@@ -295,20 +401,25 @@
   `;
 
   // ========== オーディオ設定 ==========
-  // ドローン(持続低音)の周波数 - 時間帯ごとの雰囲気
   const DRONE_FREQS = {
-    '朝': [110, 165],   // A2 + E3 (希望的)
-    '昼': [123, 175],   // やや緊張感
-    '夕': [98, 147],    // 暖かい
-    '夜': [73, 110]     // 低く神秘的
+    '朝': [110, 165],
+    '昼': [123, 175],
+    '夕': [98, 147],
+    '夜': [73, 110]
+  };
+  // Day3 用の不穏なドローン(不協和音)
+  const DRONE_FREQS_HARD = {
+    '朝': [98, 139],   // 増4度の緊張
+    '昼': [110, 156],
+    '夕': [87, 123],
+    '夜': [65, 92]
   };
 
-  // メロディの音階 - 時間帯ごと
   const MELODY_SCALES = {
-    '朝': [392, 440, 494, 587, 659, 740],   // G major系
-    '昼': [466, 494, 554, 622, 659, 740],   // 不協和な緊張
-    '夕': [349, 392, 440, 494, 523, 587],   // F major系
-    '夜': [220, 247, 277, 330, 370, 415]    // 低音域マイナー系
+    '朝': [392, 440, 494, 587, 659, 740],
+    '昼': [466, 494, 554, 622, 659, 740],
+    '夕': [349, 392, 440, 494, 523, 587],
+    '夜': [220, 247, 277, 330, 370, 415]
   };
 
   let state = null;
@@ -317,11 +428,11 @@
   let scorpions = [];
   let scorpionTimer = null;
 
-  // オーディオ状態
   let audioCtx = null;
   let masterGain = null;
   let drone = null;
   let wind = null;
+  let windGain = null;  // 風の音量を別管理(砂嵐で強くする)
   let melodyTimer = null;
   let isMuted = false;
   let audioStarted = false;
@@ -339,7 +450,32 @@
     };
   }
 
-  // ========== オーディオ関数 ==========
+  // ========== 難度判定ヘルパー ==========
+  function isHardMode() {
+    return state && state.day >= HARD_DAY;
+  }
+
+  function getPhaseDuration(phase) {
+    return isHardMode() ? PHASE_DURATIONS_HARD[phase] : PHASE_DURATIONS_NORMAL[phase];
+  }
+
+  function getScorpionCount() {
+    return isHardMode() ? SCORPION_COUNT_HARD : SCORPION_COUNT_NORMAL;
+  }
+
+  function getScorpionInterval() {
+    return isHardMode() ? SCORPION_INTERVAL_HARD : SCORPION_INTERVAL_NORMAL;
+  }
+
+  function getDroneFreqs(phase) {
+    return isHardMode() ? DRONE_FREQS_HARD[phase] : DRONE_FREQS[phase];
+  }
+
+  function getSkyColor(phase) {
+    return isHardMode() ? PHASE_COLORS_HARD[phase] : PHASE_COLORS[phase];
+  }
+
+  // ========== オーディオ ==========
   function initAudio() {
     if (audioStarted) return;
     audioStarted = true;
@@ -347,7 +483,6 @@
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     } catch (e) {
-      console.log('Audio not supported');
       return;
     }
 
@@ -362,7 +497,6 @@
   }
 
   function startWind() {
-    // ピンクノイズ生成(自然な風の音)
     const bufferSize = audioCtx.sampleRate * 4;
     const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -394,7 +528,6 @@
     source.connect(filter).connect(gain).connect(masterGain);
     source.start();
 
-    // フィルター周波数をゆっくり変化させて風の揺らぎを表現
     const lfo = audioCtx.createOscillator();
     lfo.frequency.value = 0.08;
     const lfoGain = audioCtx.createGain();
@@ -403,6 +536,19 @@
     lfo.start();
 
     wind = { source, filter, gain };
+    windGain = gain;
+  }
+
+  function setWindIntensity(intense) {
+    if (!windGain || !wind || !audioCtx) return;
+    const now = audioCtx.currentTime;
+    if (intense) {
+      windGain.gain.linearRampToValueAtTime(0.25, now + 1.5);
+      wind.filter.frequency.linearRampToValueAtTime(1400, now + 1.5);
+    } else {
+      windGain.gain.linearRampToValueAtTime(0.08, now + 1.5);
+      wind.filter.frequency.linearRampToValueAtTime(600, now + 1.5);
+    }
   }
 
   function startDrone() {
@@ -430,7 +576,7 @@
 
   function updateDroneForPhase(phase, rampSec = 2) {
     if (!drone || !audioCtx) return;
-    const [f1, f2] = DRONE_FREQS[phase];
+    const [f1, f2] = getDroneFreqs(phase);
     const target = audioCtx.currentTime + rampSec;
     drone.osc1.frequency.linearRampToValueAtTime(f1, target);
     drone.osc2.frequency.linearRampToValueAtTime(f2, target);
@@ -483,7 +629,6 @@
     const now = audioCtx.currentTime;
 
     if (type === 'death') {
-      // 下降する不吉な音
       const osc = audioCtx.createOscillator();
       osc.type = 'sawtooth';
       osc.frequency.setValueAtTime(220, now);
@@ -498,7 +643,6 @@
       osc.start(now);
       osc.stop(now + 1.6);
     } else if (type === 'win') {
-      // 勝利のアルペジオ(G major)
       const notes = [392, 494, 587, 784, 988];
       notes.forEach((freq, i) => {
         const osc = audioCtx.createOscillator();
@@ -513,6 +657,23 @@
         osc.start(t);
         osc.stop(t + 1.0);
       });
+    } else if (type === 'sandstorm') {
+      // 砂嵐到来の不穏な低い轟音
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(40, now);
+      osc.frequency.linearRampToValueAtTime(80, now + 1.5);
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 200;
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(0.18, now + 0.5);
+      gain.gain.linearRampToValueAtTime(0.18, now + 1.8);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 3);
+      osc.connect(filter).connect(gain).connect(masterGain);
+      osc.start(now);
+      osc.stop(now + 3);
     }
   }
 
@@ -576,7 +737,7 @@
     }
 
     const grid = document.getElementById('grid');
-    const count = Math.min(SCORPION_COUNT, validCells.length);
+    const count = Math.min(getScorpionCount(), validCells.length);
     for (let i = 0; i < count; i++) {
       const { x, y } = validCells[i];
       const element = document.createElement('div');
@@ -616,7 +777,7 @@
 
   function startScorpions() {
     if (scorpionTimer) clearInterval(scorpionTimer);
-    scorpionTimer = setInterval(moveScorpions, SCORPION_MOVE_INTERVAL);
+    scorpionTimer = setInterval(moveScorpions, getScorpionInterval());
   }
 
   function stopScorpions() {
@@ -626,15 +787,59 @@
     }
   }
 
+  // ========== 砂嵐 ==========
+  function updateVisionMaskPosition() {
+    // プレイヤー位置を中心に視界マスクのグラデーション中心を移動
+    const mask = document.getElementById('vision-mask');
+    // sandstorm要素は #grid と同じ500x500の領域。プレイヤーのグリッド内座標から%で算出
+    const px = ((state.playerX + 0.5) / GRID_SIZE) * 100;
+    const py = ((state.playerY + 0.5) / GRID_SIZE) * 100;
+    mask.style.background = `radial-gradient(circle at ${px}% ${py}%,
+                transparent 0px,
+                transparent 110px,
+                rgba(180, 130, 80, 0.7) 140px,
+                rgba(160, 110, 60, 0.95) 200px,
+                rgba(140, 95, 50, 1) 280px)`;
+  }
+
+  function startSandstorm() {
+    document.getElementById('sandstorm').classList.add('active');
+    updateVisionMaskPosition();
+    setWindIntensity(true);
+    playSfx('sandstorm');
+  }
+
+  function stopSandstorm() {
+    document.getElementById('sandstorm').classList.remove('active');
+    setWindIntensity(false);
+  }
+
+  function isSandstormActive() {
+    // Day3以降は常時砂嵐
+    return isHardMode();
+  }
+
+  function showDay3Warning() {
+    const warn = document.getElementById('day3-warning');
+    warn.classList.remove('show');
+    void warn.offsetWidth; // re-trigger animation
+    warn.classList.add('show');
+  }
+
+  // ========== UI更新 ==========
   function updatePlayerPosition() {
     const player = document.getElementById('player');
     player.style.left = (GRID_OFFSET_X + state.playerX * CELL_SIZE) + 'px';
     player.style.top = (GRID_OFFSET_Y + state.playerY * CELL_SIZE) + 'px';
+    if (isSandstormActive()) {
+      updateVisionMaskPosition();
+    }
   }
 
   function updateHeader() {
     const phase = PHASES[state.phaseIndex];
-    document.getElementById('header').textContent = `Day ${state.day} - ${phase}`;
+    const hardMark = isHardMode() ? ' 🌪' : '';
+    document.getElementById('header').textContent = `Day ${state.day} - ${phase}${hardMark}`;
     document.getElementById('water-status').textContent = state.drankToday ? '💧' : '';
   }
 
@@ -660,12 +865,12 @@
   function startPhase() {
     if (state.gameOver) return;
     const phase = PHASES[state.phaseIndex];
-    setSky(PHASE_COLORS[phase], 1);
+    setSky(getSkyColor(phase), 1);
     setGrid(GRID_COLORS[phase], 1);
     updateDroneForPhase(phase, 1);
     updateHeader();
 
-    const duration = PHASE_DURATIONS[phase];
+    const duration = getPhaseDuration(phase);
     warningTimer = setTimeout(showWarning, duration - WARNING_TIME);
     phaseTimer = setTimeout(endPhase, duration);
   }
@@ -674,14 +879,15 @@
     if (state.gameOver) return;
     const nextIndex = (state.phaseIndex + 1) % PHASES.length;
     const nextPhase = PHASES[nextIndex];
-    setSky(PHASE_COLORS[nextPhase], 5);
+    setSky(getSkyColor(nextPhase), 5);
     setGrid(GRID_COLORS[nextPhase], 5);
-    // ドローンも次のフェーズへゆっくり遷移
     updateDroneForPhase(nextPhase, 5);
   }
 
   function endPhase() {
     if (state.gameOver) return;
+
+    const wasHard = isHardMode();
 
     state.phaseIndex++;
     if (state.phaseIndex >= PHASES.length) {
@@ -696,6 +902,11 @@
 
       if (state.day > 3) {
         return win();
+      }
+
+      // 高難度モードへの遷移検知
+      if (!wasHard && isHardMode()) {
+        enterHardMode();
       }
     }
 
@@ -715,11 +926,19 @@
     startPhase();
   }
 
+  function enterHardMode() {
+    showDay3Warning();
+    spawnScorpions();        // サソリ12匹に再スポーン
+    startScorpions();        // 速度0.8秒に更新
+    startSandstorm();
+  }
+
   function gameOver(msg) {
     state.gameOver = true;
     clearTimeout(phaseTimer);
     clearTimeout(warningTimer);
     stopScorpions();
+    stopSandstorm();
     playSfx('death');
     document.getElementById('overlay-msg').textContent = msg;
     document.getElementById('retry').textContent = `もう一度 (Day ${state.day} 朝から)`;
@@ -732,6 +951,7 @@
     clearTimeout(phaseTimer);
     clearTimeout(warningTimer);
     stopScorpions();
+    stopSandstorm();
     playSfx('win');
 
     const flash = document.getElementById('flash');
@@ -760,6 +980,14 @@
     document.getElementById('overlay').classList.remove('show');
     spawnScorpions();
     updatePlayerPosition();
+
+    // Day3からリスタートする場合は砂嵐継続
+    if (isSandstormActive()) {
+      startSandstorm();
+    } else {
+      stopSandstorm();
+    }
+
     startPhase();
     startScorpions();
   }
