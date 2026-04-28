@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>砂漠遭難</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #1a0f08;
+    font-family: 'Hiragino Sans', 'Yu Gothic', 'Meiryo', sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #game {
+    width: 600px;
+    height: 600px;
+    position: relative;
+    background: #F2A85C;
+    transition: background 1s;
+    overflow: hidden;
+    box-shadow: 0 0 50px rgba(0,0,0,0.6);
+  }
+  #header {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    text-align: center;
+    color: #fff;
+    padding: 12px;
+    font-size: 18px;
+    font-weight: bold;
+    background: rgba(0,0,0,0.55);
+    z-index: 5;
+    letter-spacing: 2px;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+  }
+  #water-status {
+    position: absolute;
+    top: 10px;
+    left: 14px;
+    font-size: 22px;
+    z-index: 6;
+    transition: opacity 0.3s;
+  }
+  #grid {
+    position: absolute;
+    top: 50px;
+    left: 50px;
+    width: 500px;
+    height: 500px;
+    background: #E8C895;
+    transition: background 1s;
+    box-shadow: inset 0 -30px 60px rgba(150, 100, 50, 0.35),
+                inset 0 30px 60px rgba(255, 220, 160, 0.15);
+  }
+  #grid::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-image:
+      radial-gradient(circle at 12% 18%, rgba(120,80,40,0.25) 1px, transparent 2px),
+      radial-gradient(circle at 67% 43%, rgba(120,80,40,0.2) 1px, transparent 2px),
+      radial-gradient(circle at 38% 78%, rgba(120,80,40,0.22) 1px, transparent 2px),
+      radial-gradient(circle at 88% 22%, rgba(120,80,40,0.2) 1px, transparent 2px),
+      radial-gradient(circle at 22% 62%, rgba(120,80,40,0.22) 1px, transparent 2px),
+      radial-gradient(circle at 52% 12%, rgba(180,140,90,0.3) 1px, transparent 2px);
+    background-size: 47px 47px, 63px 63px, 51px 51px, 71px 71px, 59px 59px, 43px 43px;
+    pointer-events: none;
+    z-index: 1;
+  }
+  #grid::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-image:
+      repeating-linear-gradient(
+        100deg,
+        transparent 0,
+        transparent 70px,
+        rgba(160, 110, 60, 0.08) 70px,
+        rgba(160, 110, 60, 0.08) 110px
+      );
+    pointer-events: none;
+    z-index: 1;
+  }
+  .cell {
+    position: absolute;
+    width: 50px;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    z-index: 2;
+  }
+  .cell.decoration {
+    font-size: 26px;
+    opacity: 0.85;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+  }
+  .cell.sleeping-bag svg {
+    width: 38px;
+    height: 46px;
+    filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4));
+  }
+  .cell.scorpion {
+    font-size: 30px;
+    z-index: 8;
+    transition: top 0.3s ease-out, left 0.3s ease-out;
+    filter: drop-shadow(0 0 4px rgba(150, 30, 30, 0.55));
+  }
+  #player {
+    position: absolute;
+    width: 50px;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    transition: top 0.12s ease-out, left 0.12s ease-out;
+    z-index: 10;
+    filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4));
+  }
+  #footer {
+    position: absolute;
+    bottom: 8px;
+    right: 14px;
+    color: rgba(255,255,255,0.75);
+    font-size: 11px;
+    z-index: 5;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+  }
+  #overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.88);
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    color: #fff;
+    z-index: 100;
+  }
+  #overlay.show { display: flex; }
+  #overlay-msg {
+    font-size: 22px;
+    margin-bottom: 32px;
+    text-align: center;
+    padding: 0 40px;
+    line-height: 1.6;
+  }
+  #retry {
+    padding: 14px 36px;
+    font-size: 17px;
+    background: #d96c3a;
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    border-radius: 4px;
+    font-family: inherit;
+    transition: background 0.2s;
+  }
+  #retry:hover { background: #e07d4d; }
+  #retry:active { background: #c55a2a; }
+  #flash {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: #fff;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 200;
+  }
+</style>
+</head>
+<body>
+<div id="game">
+  <div id="header">Day 1 - 朝</div>
+  <div id="water-status"></div>
+  <div id="grid"></div>
+  <div id="player">🚶</div>
+  <div id="footer">作: 鍋島</div>
+  <div id="overlay">
+    <div id="overlay-msg"></div>
+    <button id="retry">もう一度</button>
+  </div>
+  <div id="flash"></div>
+</div>
+<script>
+  const GRID_SIZE = 10;
+  const CELL_SIZE = 50;
+  const GRID_OFFSET_X = 50;
+  const GRID_OFFSET_Y = 50;
+
+  const PHASES = ['朝', '昼', '夕', '夜'];
+  const PHASE_DURATIONS = {
+    '朝': 22000,
+    '昼': 15000,
+    '夕': 22000,
+    '夜': 15000
+  };
+  const WARNING_TIME = 5000;
+  const PHASE_COLORS = {
+    '朝': '#F2A85C',
+    '昼': '#FFD33A',
+    '夕': '#C75A2C',
+    '夜': '#1a1a3e'
+  };
+  const GRID_COLORS = {
+    '朝': '#E8C895',
+    '昼': '#F2D080',
+    '夕': '#C98860',
+    '夜': '#3A2C1E'
+  };
+
+  const ROOF = { x: 2, y: 2 };
+  const SLEEPING_BAG = { x: 7, y: 7 };
+  const WATER = { x: 5, y: 5 };
+
+  // サソリ設定
+  const SCORPION_COUNT = 8;
+  const SCORPION_MOVE_INTERVAL = 1200; // 1.2秒ごとに移動
+
+  const DECORATIONS = [
+    { x: 0, y: 0, emoji: '🌵' },
+    { x: 9, y: 0, emoji: '🌵' },
+    { x: 5, y: 0, emoji: '🌵' },
+    { x: 0, y: 5, emoji: '🌵' },
+    { x: 9, y: 5, emoji: '🪨' },
+    { x: 5, y: 9, emoji: '🪨' },
+    { x: 0, y: 9, emoji: '🌵' },
+    { x: 9, y: 9, emoji: '🦴' },
+    { x: 1, y: 6, emoji: '🪨' },
+    { x: 8, y: 3, emoji: '🌵' }
+  ];
+
+  const SLEEPING_BAG_SVG = `
+    <svg viewBox="0 0 40 50" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="sbGrad" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#1a1a1a"/>
+          <stop offset="45%" stop-color="#3d3d3d"/>
+          <stop offset="100%" stop-color="#1a1a1a"/>
+        </linearGradient>
+      </defs>
+      <path d="M 20 4
+               C 12 4, 9 9, 9 16
+               L 11 36
+               C 12 44, 16 47, 20 47
+               C 24 47, 28 44, 29 36
+               L 31 16
+               C 31 9, 28 4, 20 4 Z"
+            fill="url(#sbGrad)" stroke="#080808" stroke-width="0.6"/>
+      <ellipse cx="20" cy="9" rx="5.5" ry="4.2" fill="#080808"/>
+      <ellipse cx="20" cy="9.5" rx="3.5" ry="2.8" fill="#000"/>
+      <path d="M 12 20 Q 20 21.5 28 20" stroke="#0a0a0a" stroke-width="0.6" fill="none"/>
+      <path d="M 13 30 Q 20 31.5 27 30" stroke="#0a0a0a" stroke-width="0.6" fill="none"/>
+      <line x1="9" y1="9" x2="6" y2="13" stroke="#1a1a1a" stroke-width="1.2"/>
+      <circle cx="6" cy="13.5" r="1.2" fill="#1a1a1a"/>
+      <path d="M 12 14 Q 11 25 13 38" stroke="#5a5a5a" stroke-width="0.8" fill="none" opacity="0.6"/>
+    </svg>
+  `;
+
+  let state = null;
+  let phaseTimer = null;
+  let warningTimer = null;
+  let scorpions = [];
+  let scorpionTimer = null;
+
+  function initState() {
+    return {
+      day: 1,
+      phaseIndex: 0,
+      playerX: SLEEPING_BAG.x,
+      playerY: SLEEPING_BAG.y,
+      drankToday: false,
+      gameOver: false,
+      won: false
+    };
+  }
+
+  function placeCell(x, y, content, isSvg = false, className = '') {
+    const cell = document.createElement('div');
+    cell.className = 'cell ' + className;
+    if (isSvg) {
+      cell.innerHTML = content;
+    } else {
+      cell.textContent = content;
+    }
+    cell.style.left = (x * CELL_SIZE) + 'px';
+    cell.style.top = (y * CELL_SIZE) + 'px';
+    return cell;
+  }
+
+  function buildGrid() {
+    const grid = document.getElementById('grid');
+    grid.innerHTML = '';
+
+    DECORATIONS.forEach(d => {
+      grid.appendChild(placeCell(d.x, d.y, d.emoji, false, 'decoration'));
+    });
+
+    grid.appendChild(placeCell(ROOF.x, ROOF.y, '⛺'));
+    grid.appendChild(placeCell(WATER.x, WATER.y, '💧'));
+    grid.appendChild(placeCell(SLEEPING_BAG.x, SLEEPING_BAG.y, SLEEPING_BAG_SVG, true, 'sleeping-bag'));
+  }
+
+  // サソリのスポーン位置として有効か判定
+  function isValidScorpionSpawn(x, y) {
+    if (x === ROOF.x && y === ROOF.y) return false;
+    if (x === SLEEPING_BAG.x && y === SLEEPING_BAG.y) return false;
+    // 寝袋の周囲1マス(プレイヤー初期位置の安全圏)
+    if (Math.abs(x - SLEEPING_BAG.x) <= 1 && Math.abs(y - SLEEPING_BAG.y) <= 1) return false;
+    return true;
+  }
+
+  // サソリの移動先として有効か判定
+  function isValidScorpionMove(x, y) {
+    if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) return false;
+    if (x === ROOF.x && y === ROOF.y) return false;
+    if (x === SLEEPING_BAG.x && y === SLEEPING_BAG.y) return false;
+    return true;
+  }
+
+  function spawnScorpions() {
+    // 既存サソリのDOM要素を削除
+    scorpions.forEach(s => s.element.remove());
+    scorpions = [];
+
+    // 有効なスポーン位置のリストを作成
+    const validCells = [];
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        if (isValidScorpionSpawn(x, y)) {
+          validCells.push({ x, y });
+        }
+      }
+    }
+
+    // シャッフル
+    for (let i = validCells.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [validCells[i], validCells[j]] = [validCells[j], validCells[i]];
+    }
+
+    const grid = document.getElementById('grid');
+    const count = Math.min(SCORPION_COUNT, validCells.length);
+    for (let i = 0; i < count; i++) {
+      const { x, y } = validCells[i];
+      const element = document.createElement('div');
+      element.className = 'cell scorpion';
+      element.textContent = '🦂';
+      element.style.left = (x * CELL_SIZE) + 'px';
+      element.style.top = (y * CELL_SIZE) + 'px';
+      grid.appendChild(element);
+      scorpions.push({ x, y, element });
+    }
+  }
+
+  function moveScorpions() {
+    if (state.gameOver) return;
+
+    const moves = [
+      { dx: 0, dy: 0 },   // 停止
+      { dx: 1, dy: 0 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: 0, dy: -1 }
+    ];
+
+    scorpions.forEach(s => {
+      const validMoves = moves.filter(m => isValidScorpionMove(s.x + m.dx, s.y + m.dy));
+      const move = validMoves[Math.floor(Math.random() * validMoves.length)];
+      s.x += move.dx;
+      s.y += move.dy;
+      s.element.style.left = (s.x * CELL_SIZE) + 'px';
+      s.element.style.top = (s.y * CELL_SIZE) + 'px';
+    });
+
+    // サソリ移動後のプレイヤーとの衝突判定
+    if (scorpions.some(s => s.x === state.playerX && s.y === state.playerY)) {
+      return gameOver('あなたはサソリに襲われました');
+    }
+  }
+
+  function startScorpions() {
+    if (scorpionTimer) clearInterval(scorpionTimer);
+    scorpionTimer = setInterval(moveScorpions, SCORPION_MOVE_INTERVAL);
+  }
+
+  function stopScorpions() {
+    if (scorpionTimer) {
+      clearInterval(scorpionTimer);
+      scorpionTimer = null;
+    }
+  }
+
+  function updatePlayerPosition() {
+    const player = document.getElementById('player');
+    player.style.left = (GRID_OFFSET_X + state.playerX * CELL_SIZE) + 'px';
+    player.style.top = (GRID_OFFSET_Y + state.playerY * CELL_SIZE) + 'px';
+  }
+
+  function updateHeader() {
+    const phase = PHASES[state.phaseIndex];
+    document.getElementById('header').textContent = `Day ${state.day} - ${phase}`;
+    document.getElementById('water-status').textContent = state.drankToday ? '💧' : '';
+  }
+
+  function setSky(color, transitionSec = 1) {
+    const game = document.getElementById('game');
+    game.style.transition = `background ${transitionSec}s`;
+    game.style.background = color;
+  }
+
+  function setGrid(color, transitionSec = 1) {
+    const grid = document.getElementById('grid');
+    grid.style.transition = `background ${transitionSec}s`;
+    grid.style.background = color;
+  }
+
+  function checkWaterPickup() {
+    if (state.playerX === WATER.x && state.playerY === WATER.y && !state.drankToday) {
+      state.drankToday = true;
+      updateHeader();
+    }
+  }
+
+  function startPhase() {
+    if (state.gameOver) return;
+    const phase = PHASES[state.phaseIndex];
+    setSky(PHASE_COLORS[phase], 1);
+    setGrid(GRID_COLORS[phase], 1);
+    updateHeader();
+
+    const duration = PHASE_DURATIONS[phase];
+    warningTimer = setTimeout(showWarning, duration - WARNING_TIME);
+    phaseTimer = setTimeout(endPhase, duration);
+  }
+
+  function showWarning() {
+    if (state.gameOver) return;
+    const nextIndex = (state.phaseIndex + 1) % PHASES.length;
+    const nextPhase = PHASES[nextIndex];
+    setSky(PHASE_COLORS[nextPhase], 5);
+    setGrid(GRID_COLORS[nextPhase], 5);
+  }
+
+  function endPhase() {
+    if (state.gameOver) return;
+
+    state.phaseIndex++;
+    if (state.phaseIndex >= PHASES.length) {
+      state.phaseIndex = 0;
+
+      if (!state.drankToday) {
+        return gameOver('あなたは喉の渇きに耐えられませんでした');
+      }
+
+      state.day++;
+      state.drankToday = false;
+
+      if (state.day > 3) {
+        return win();
+      }
+    }
+
+    const newPhase = PHASES[state.phaseIndex];
+
+    if (newPhase === '昼') {
+      if (!(state.playerX === ROOF.x && state.playerY === ROOF.y)) {
+        return gameOver('あなたは昼に陽光の下にいました');
+      }
+    }
+    if (newPhase === '夜') {
+      if (!(state.playerX === SLEEPING_BAG.x && state.playerY === SLEEPING_BAG.y)) {
+        return gameOver('あなたは夜に身を守る場所がありませんでした');
+      }
+    }
+
+    startPhase();
+  }
+
+  function gameOver(msg) {
+    state.gameOver = true;
+    clearTimeout(phaseTimer);
+    clearTimeout(warningTimer);
+    stopScorpions();
+    document.getElementById('overlay-msg').textContent = msg;
+    document.getElementById('retry').textContent = `もう一度 (Day ${state.day} 朝から)`;
+    document.getElementById('overlay').classList.add('show');
+  }
+
+  function win() {
+    state.won = true;
+    state.gameOver = true;
+    clearTimeout(phaseTimer);
+    clearTimeout(warningTimer);
+    stopScorpions();
+
+    const flash = document.getElementById('flash');
+    flash.style.transition = 'opacity 0.4s';
+    flash.style.opacity = '1';
+    setTimeout(() => {
+      flash.style.opacity = '0';
+      document.getElementById('overlay-msg').innerHTML =
+        '🚁<br><br>救援が到着しました<br><br><span style="font-size:16px;opacity:0.85;">あなたは生き延びた</span>';
+      document.getElementById('retry').textContent = 'もう一度プレイ';
+      document.getElementById('overlay').classList.add('show');
+    }, 500);
+  }
+
+  function restart() {
+    if (state.won) {
+      state = initState();
+    } else {
+      state.phaseIndex = 0;
+      state.playerX = SLEEPING_BAG.x;
+      state.playerY = SLEEPING_BAG.y;
+      state.drankToday = false;
+      state.gameOver = false;
+    }
+
+    document.getElementById('overlay').classList.remove('show');
+    spawnScorpions();
+    updatePlayerPosition();
+    startPhase();
+    startScorpions();
+  }
+
+  function tryMove(dx, dy) {
+    if (state.gameOver) return;
+
+    const phase = PHASES[state.phaseIndex];
+
+    const newX = Math.max(0, Math.min(GRID_SIZE - 1, state.playerX + dx));
+    const newY = Math.max(0, Math.min(GRID_SIZE - 1, state.playerY + dy));
+
+    if (phase === '夜') {
+      if (newX !== state.playerX || newY !== state.playerY) {
+        state.playerX = newX;
+        state.playerY = newY;
+        updatePlayerPosition();
+        return gameOver('あなたは夜に動いていました');
+      }
+      return;
+    }
+
+    if (newX === state.playerX && newY === state.playerY) return;
+
+    state.playerX = newX;
+    state.playerY = newY;
+    updatePlayerPosition();
+    checkWaterPickup();
+
+    // サソリとの衝突判定(プレイヤー移動時)
+    if (scorpions.some(s => s.x === state.playerX && s.y === state.playerY)) {
+      return gameOver('あなたはサソリに襲われました');
+    }
+
+    if (phase === '昼') {
+      if (!(state.playerX === ROOF.x && state.playerY === ROOF.y)) {
+        return gameOver('あなたは昼に陽光の下にいました');
+      }
+    }
+  }
+
+  document.addEventListener('keydown', (e) => {
+    let dx = 0, dy = 0;
+    switch (e.key) {
+      case 'ArrowUp': case 'w': case 'W': dy = -1; break;
+      case 'ArrowDown': case 's': case 'S': dy = 1; break;
+      case 'ArrowLeft': case 'a': case 'A': dx = -1; break;
+      case 'ArrowRight': case 'd': case 'D': dx = 1; break;
+      default: return;
+    }
+    e.preventDefault();
+    tryMove(dx, dy);
+  });
+
+  document.getElementById('retry').addEventListener('click', restart);
+
+  // 初期化
+  state = initState();
+  buildGrid();
+  spawnScorpions();
+  updatePlayerPosition();
+  startPhase();
+  startScorpions();
+</script>
+</body>
+</html>
