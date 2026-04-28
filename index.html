@@ -51,6 +51,29 @@
     z-index: 6;
     transition: opacity 0.3s;
   }
+  #mute-btn {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    width: 32px;
+    height: 32px;
+    background: rgba(0,0,0,0.5);
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 4px;
+    color: #fff;
+    font-size: 16px;
+    cursor: pointer;
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: background 0.2s;
+    font-family: inherit;
+  }
+  #mute-btn:hover {
+    background: rgba(0,0,0,0.75);
+  }
   #grid {
     position: absolute;
     top: 50px;
@@ -187,6 +210,7 @@
 <div id="game">
   <div id="header">Day 1 - 朝</div>
   <div id="water-status"></div>
+  <button id="mute-btn" title="ミュート切替">🔊</button>
   <div id="grid"></div>
   <div id="player">🚶</div>
   <div id="footer">作: 鍋島</div>
@@ -227,9 +251,8 @@
   const SLEEPING_BAG = { x: 7, y: 7 };
   const WATER = { x: 5, y: 5 };
 
-  // サソリ設定
   const SCORPION_COUNT = 8;
-  const SCORPION_MOVE_INTERVAL = 1200; // 1.2秒ごとに移動
+  const SCORPION_MOVE_INTERVAL = 1200;
 
   const DECORATIONS = [
     { x: 0, y: 0, emoji: '🌵' },
@@ -271,11 +294,38 @@
     </svg>
   `;
 
+  // ========== オーディオ設定 ==========
+  // ドローン(持続低音)の周波数 - 時間帯ごとの雰囲気
+  const DRONE_FREQS = {
+    '朝': [110, 165],   // A2 + E3 (希望的)
+    '昼': [123, 175],   // やや緊張感
+    '夕': [98, 147],    // 暖かい
+    '夜': [73, 110]     // 低く神秘的
+  };
+
+  // メロディの音階 - 時間帯ごと
+  const MELODY_SCALES = {
+    '朝': [392, 440, 494, 587, 659, 740],   // G major系
+    '昼': [466, 494, 554, 622, 659, 740],   // 不協和な緊張
+    '夕': [349, 392, 440, 494, 523, 587],   // F major系
+    '夜': [220, 247, 277, 330, 370, 415]    // 低音域マイナー系
+  };
+
   let state = null;
   let phaseTimer = null;
   let warningTimer = null;
   let scorpions = [];
   let scorpionTimer = null;
+
+  // オーディオ状態
+  let audioCtx = null;
+  let masterGain = null;
+  let drone = null;
+  let wind = null;
+  let melodyTimer = null;
+  let isMuted = false;
+  let audioStarted = false;
+  const MASTER_VOLUME = 0.6;
 
   function initState() {
     return {
@@ -289,6 +339,184 @@
     };
   }
 
+  // ========== オーディオ関数 ==========
+  function initAudio() {
+    if (audioStarted) return;
+    audioStarted = true;
+
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (e) {
+      console.log('Audio not supported');
+      return;
+    }
+
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = isMuted ? 0 : MASTER_VOLUME;
+    masterGain.connect(audioCtx.destination);
+
+    startWind();
+    startDrone();
+    scheduleMelody();
+    updateDroneForPhase(PHASES[state.phaseIndex], 0.5);
+  }
+
+  function startWind() {
+    // ピンクノイズ生成(自然な風の音)
+    const bufferSize = audioCtx.sampleRate * 4;
+    const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    for (let i = 0; i < bufferSize; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + white * 0.0555179;
+      b1 = 0.99332 * b1 + white * 0.0750759;
+      b2 = 0.96900 * b2 + white * 0.1538520;
+      b3 = 0.86650 * b3 + white * 0.3104856;
+      b4 = 0.55000 * b4 + white * 0.5329522;
+      b5 = -0.7616 * b5 - white * 0.0168980;
+      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
+      b6 = white * 0.115926;
+    }
+
+    const source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 600;
+    filter.Q.value = 0.5;
+
+    const gain = audioCtx.createGain();
+    gain.gain.value = 0.08;
+
+    source.connect(filter).connect(gain).connect(masterGain);
+    source.start();
+
+    // フィルター周波数をゆっくり変化させて風の揺らぎを表現
+    const lfo = audioCtx.createOscillator();
+    lfo.frequency.value = 0.08;
+    const lfoGain = audioCtx.createGain();
+    lfoGain.gain.value = 200;
+    lfo.connect(lfoGain).connect(filter.frequency);
+    lfo.start();
+
+    wind = { source, filter, gain };
+  }
+
+  function startDrone() {
+    const osc1 = audioCtx.createOscillator();
+    osc1.type = 'sine';
+    osc1.frequency.value = DRONE_FREQS['朝'][0];
+
+    const osc2 = audioCtx.createOscillator();
+    osc2.type = 'sine';
+    osc2.frequency.value = DRONE_FREQS['朝'][1];
+
+    const gain = audioCtx.createGain();
+    gain.gain.value = 0;
+    gain.gain.linearRampToValueAtTime(0.05, audioCtx.currentTime + 1);
+
+    osc1.connect(gain);
+    osc2.connect(gain);
+    gain.connect(masterGain);
+
+    osc1.start();
+    osc2.start();
+
+    drone = { osc1, osc2, gain };
+  }
+
+  function updateDroneForPhase(phase, rampSec = 2) {
+    if (!drone || !audioCtx) return;
+    const [f1, f2] = DRONE_FREQS[phase];
+    const target = audioCtx.currentTime + rampSec;
+    drone.osc1.frequency.linearRampToValueAtTime(f1, target);
+    drone.osc2.frequency.linearRampToValueAtTime(f2, target);
+  }
+
+  function playMelodyNote() {
+    if (!audioCtx) return;
+    if (!isMuted && state && !state.gameOver) {
+      const phase = PHASES[state.phaseIndex];
+      const scale = MELODY_SCALES[phase];
+      const freq = scale[Math.floor(Math.random() * scale.length)];
+
+      const osc = audioCtx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+
+      const gain = audioCtx.createGain();
+      const now = audioCtx.currentTime;
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(0.05, now + 0.1);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.8);
+
+      osc.connect(gain).connect(masterGain);
+      osc.start(now);
+      osc.stop(now + 1.9);
+    }
+    scheduleMelody();
+  }
+
+  function scheduleMelody() {
+    if (melodyTimer) clearTimeout(melodyTimer);
+    const interval = 2000 + Math.random() * 2500;
+    melodyTimer = setTimeout(playMelodyNote, interval);
+  }
+
+  function toggleMute() {
+    isMuted = !isMuted;
+    if (masterGain && audioCtx) {
+      masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
+      masterGain.gain.linearRampToValueAtTime(
+        isMuted ? 0 : MASTER_VOLUME,
+        audioCtx.currentTime + 0.15
+      );
+    }
+    document.getElementById('mute-btn').textContent = isMuted ? '🔇' : '🔊';
+  }
+
+  function playSfx(type) {
+    if (!audioCtx || isMuted) return;
+    const now = audioCtx.currentTime;
+
+    if (type === 'death') {
+      // 下降する不吉な音
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(220, now);
+      osc.frequency.exponentialRampToValueAtTime(55, now + 1.5);
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 800;
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.5);
+      osc.connect(filter).connect(gain).connect(masterGain);
+      osc.start(now);
+      osc.stop(now + 1.6);
+    } else if (type === 'win') {
+      // 勝利のアルペジオ(G major)
+      const notes = [392, 494, 587, 784, 988];
+      notes.forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.value = freq;
+        const gain = audioCtx.createGain();
+        const t = now + i * 0.13;
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(0.1, t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+        osc.connect(gain).connect(masterGain);
+        osc.start(t);
+        osc.stop(t + 1.0);
+      });
+    }
+  }
+
+  // ========== ゲーム関数 ==========
   function placeCell(x, y, content, isSvg = false, className = '') {
     const cell = document.createElement('div');
     cell.className = 'cell ' + className;
@@ -315,16 +543,13 @@
     grid.appendChild(placeCell(SLEEPING_BAG.x, SLEEPING_BAG.y, SLEEPING_BAG_SVG, true, 'sleeping-bag'));
   }
 
-  // サソリのスポーン位置として有効か判定
   function isValidScorpionSpawn(x, y) {
     if (x === ROOF.x && y === ROOF.y) return false;
     if (x === SLEEPING_BAG.x && y === SLEEPING_BAG.y) return false;
-    // 寝袋の周囲1マス(プレイヤー初期位置の安全圏)
     if (Math.abs(x - SLEEPING_BAG.x) <= 1 && Math.abs(y - SLEEPING_BAG.y) <= 1) return false;
     return true;
   }
 
-  // サソリの移動先として有効か判定
   function isValidScorpionMove(x, y) {
     if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) return false;
     if (x === ROOF.x && y === ROOF.y) return false;
@@ -333,11 +558,9 @@
   }
 
   function spawnScorpions() {
-    // 既存サソリのDOM要素を削除
     scorpions.forEach(s => s.element.remove());
     scorpions = [];
 
-    // 有効なスポーン位置のリストを作成
     const validCells = [];
     for (let y = 0; y < GRID_SIZE; y++) {
       for (let x = 0; x < GRID_SIZE; x++) {
@@ -347,7 +570,6 @@
       }
     }
 
-    // シャッフル
     for (let i = validCells.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [validCells[i], validCells[j]] = [validCells[j], validCells[i]];
@@ -371,7 +593,7 @@
     if (state.gameOver) return;
 
     const moves = [
-      { dx: 0, dy: 0 },   // 停止
+      { dx: 0, dy: 0 },
       { dx: 1, dy: 0 },
       { dx: -1, dy: 0 },
       { dx: 0, dy: 1 },
@@ -387,7 +609,6 @@
       s.element.style.top = (s.y * CELL_SIZE) + 'px';
     });
 
-    // サソリ移動後のプレイヤーとの衝突判定
     if (scorpions.some(s => s.x === state.playerX && s.y === state.playerY)) {
       return gameOver('あなたはサソリに襲われました');
     }
@@ -441,6 +662,7 @@
     const phase = PHASES[state.phaseIndex];
     setSky(PHASE_COLORS[phase], 1);
     setGrid(GRID_COLORS[phase], 1);
+    updateDroneForPhase(phase, 1);
     updateHeader();
 
     const duration = PHASE_DURATIONS[phase];
@@ -454,6 +676,8 @@
     const nextPhase = PHASES[nextIndex];
     setSky(PHASE_COLORS[nextPhase], 5);
     setGrid(GRID_COLORS[nextPhase], 5);
+    // ドローンも次のフェーズへゆっくり遷移
+    updateDroneForPhase(nextPhase, 5);
   }
 
   function endPhase() {
@@ -496,6 +720,7 @@
     clearTimeout(phaseTimer);
     clearTimeout(warningTimer);
     stopScorpions();
+    playSfx('death');
     document.getElementById('overlay-msg').textContent = msg;
     document.getElementById('retry').textContent = `もう一度 (Day ${state.day} 朝から)`;
     document.getElementById('overlay').classList.add('show');
@@ -507,6 +732,7 @@
     clearTimeout(phaseTimer);
     clearTimeout(warningTimer);
     stopScorpions();
+    playSfx('win');
 
     const flash = document.getElementById('flash');
     flash.style.transition = 'opacity 0.4s';
@@ -563,7 +789,6 @@
     updatePlayerPosition();
     checkWaterPickup();
 
-    // サソリとの衝突判定(プレイヤー移動時)
     if (scorpions.some(s => s.x === state.playerX && s.y === state.playerY)) {
       return gameOver('あなたはサソリに襲われました');
     }
@@ -585,10 +810,19 @@
       default: return;
     }
     e.preventDefault();
+    if (!audioStarted) initAudio();
     tryMove(dx, dy);
   });
 
-  document.getElementById('retry').addEventListener('click', restart);
+  document.getElementById('retry').addEventListener('click', () => {
+    if (!audioStarted) initAudio();
+    restart();
+  });
+
+  document.getElementById('mute-btn').addEventListener('click', () => {
+    if (!audioStarted) initAudio();
+    toggleMute();
+  });
 
   // 初期化
   state = initState();
